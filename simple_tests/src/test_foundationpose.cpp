@@ -10,9 +10,9 @@
 using namespace inference_core;
 using namespace detection_6d;
 
-static const std::string refiner_engine_path_ = "/workspace/models/refiner_hwc_dynamic_fp16.engine";
-static const std::string scorer_engine_path_  = "/workspace/models/scorer_hwc_dynamic_fp16.engine";
-static const std::string demo_data_path_      = "/workspace/test_data/mustard0";
+static const std::string refiner_engine_path_ = "workspace/models/refiner_hwc_dynamic_fp16.engine";
+static const std::string scorer_engine_path_  = "workspace/models/scorer_hwc_dynamic_fp16.engine";
+static const std::string demo_data_path_      = "workspace/test_data/mustard0";
 static const std::string demo_textured_obj_path = demo_data_path_ + "/mesh/textured_simple.obj";
 static const std::string demo_textured_map_path = demo_data_path_ + "/mesh/texture_map.png";
 static const std::string demo_name_             = "mustard";
@@ -74,7 +74,7 @@ TEST(foundationpose_test, test)
   std::vector<std::string> frame_ids;
   for (const auto &rgb_path : rgb_paths)
   {
-    frame_ids.push_back(rgb_path.stem());
+    frame_ids.push_back(rgb_path.stem().string());
   }
 
   int                  total = frame_ids.size();

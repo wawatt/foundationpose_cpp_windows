@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES 
 #include "foundationpose_sampling.hpp"
 #include "foundationpose_sampling.cu.hpp"
 

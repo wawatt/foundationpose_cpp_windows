@@ -1,4 +1,56 @@
 # Foundationpose-CPP
+## Windows
+First, thanks to the original author. Since my deployment environment is Windows, I modified [the original repo](https://github.com/zz990099/foundationpose_cpp.git) to run on Windows 10/11.
+Inference environment: CUDA 11.8 + CUDNN 8.9 + TensorRT 8.6.1.6
+### 1. Basic Dependencies
+For convenience, use vcpkg. Refer to the [official documentation](https://learn.microsoft.com/zh-cn/vcpkg/) for usage:
+```shell
+git clone https://github.com/microsoft/vcpkg.git
+cd vcpkg
+./bootstrap-vcpkg.bat
+./vcpkg.exe install assimp opencv4 eigen3 gtest glog 
+```
+### 2. CV-CUDA
+[CV-CUDA](https://github.com/CVCUDA/CV-CUDA.git) currently (2025-07-30) does not support Windows. The main modification in this branch is using ppl.cv instead. Compile ppl.cv:
+```shell
+git clone https://github.com/openppl/ppl.cv.git
+cd ppl.cv
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=../install ^
+-DPPLCV_USE_X86_64=ON -DPYBIND11_NOPYTHON=ON ^
+-DPPLCV_USE_CUDA=ON -DPPLCV_INSTALL=ON -DPPLCOMMON_INSTALL=ON
+cmake --build . --config Release --target ALL_BUILD
+cmake --build . --config Release --target install
+```
+### 3. Compile This Repository
+```shell
+git clone https://github.com/wawatt/foundationpose_cpp_windows.git
+cd foundationpose_cpp
+git submodule init
+git submodule update
+```
+Remove MSVC-unsupported flags -Wextra -Wdeprecated in:
+[easy_deploy_tool\deploy_core](easy_deploy_tool\deploy_core\CMakeLists.txt) and
+[easy_deploy_tool\inference_core\trt_core](easy_deploy_tool\inference_core\trt_core\CMakeLists.txt) 
+```shell
+cd foundationpose_cpp
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=D:/build/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+-DENABLE_TENSORRT=ON -DTRT_DIR=E:/ENVs/TensorRT-8.6.1.6 ^
+-Dpplcv_DIR="E:/ENVs/ppl.cv/install/lib/cmake/ppl" ^
+-DCMAKE_CUDA_ARCHITECTURES="86;89"
+cmake --build . --config Release --target ALL_BUILD
+```
+### 4. Convert ONNX to TensorRT Models
+[Script](tools\win.md)
+### 5. Run
+```shell
+cd foundationpose_cpp_windows
+"build/bin/Release/simple_tests.exe" --gtest_filter=foundationpose_test.test
+```
+
 ## About this project
 
 This project is adapted from [nvidia-issac-pose-estimation](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation), with simplified dependencies. It enables inference using ONNX models exported from the [Python implementation](https://github.com/NVlabs/FoundationPose) of `FoundationPose`, making deployment and application highly convenient.

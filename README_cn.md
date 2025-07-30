@@ -1,4 +1,57 @@
 # Foundationpose-CPP
+## Windows
+首先感谢原作，由于我的常用部署环境是windows，所以为了在windows 10/11 上运行，修改了[原repo](https://github.com/zz990099/foundationpose_cpp.git)
+推理环境: CUDA11.8 + CUDNN8.9 + TensorRT8.6.1.6
+### 1. 基础依赖
+为了方便，这里使用的是`vcpkg`。具体使用方法可以参考[官方文档](https://learn.microsoft.com/zh-cn/vcpkg/)
+```shell
+git clone https://github.com/microsoft/vcpkg.git
+cd vcpkg
+./bootstrap-vcpkg.bat
+./vcpkg.exe install assimp opencv4 eigen3 gtest glog 
+```
+### 2. CV-CUDA
+目前[CV-CUDA](https://github.com/CVCUDA/CV-CUDA.git)目前(20250730)尚不支持windows平台，所以本分支的主要修改在于如何用ppl.cv替换CV-CUDA, 下面编译ppl.cv
+```shell
+git clone https://github.com/openppl/ppl.cv.git
+cd ppl.cv
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=../install ^
+-DPPLCV_USE_X86_64=ON -DPYBIND11_NOPYTHON=ON ^
+-DPPLCV_USE_CUDA=ON -DPPLCV_INSTALL=ON -DPPLCOMMON_INSTALL=ON
+cmake --build . --config Release --target ALL_BUILD
+cmake --build . --config Release --target install
+```
+### 3. 编译本仓库
+```shell
+git clone https://github.com/wawatt/foundationpose_cpp_windows.git
+cd foundationpose_cpp
+git submodule init
+git submodule update
+```
+- 去除MSVC不支持的-Wextra -Wdeprecated 选项
+[easy_deploy_tool\deploy_core](easy_deploy_tool\deploy_core\CMakeLists.txt)和
+[easy_deploy_tool\inference_core\trt_core](easy_deploy_tool\inference_core\trt_core\CMakeLists.txt) 
+```shell
+cd foundationpose_cpp
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=D:/build/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+-DENABLE_TENSORRT=ON -DTRT_DIR=E:/ENVs/TensorRT-8.6.1.6 ^
+-Dpplcv_DIR="E:/ENVs/ppl.cv/install/lib/cmake/ppl" ^
+-DCMAKE_CUDA_ARCHITECTURES="86;89"
+cmake --build . --config Release --target ALL_BUILD
+```
+### 4. onnx转trt模型
+[脚本](tools\win.md)
+### 5. 运行
+```shell
+cd foundationpose_cpp_windows
+"build/bin/Release/simple_tests.exe" --gtest_filter=foundationpose_test.test
+```
+以下文本未作修改...
+
 ## About this project
 
 该项目基于[nvidia-issac-pose-estimation](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation)改写，去除了原项目中的复杂依赖，能够使用`FoundationPose`的Python工程[FoundationPose](https://github.com/NVlabs/FoundationPose)导出的onnx模型来做推理，部署应用十分方便。

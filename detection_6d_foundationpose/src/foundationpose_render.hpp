@@ -4,9 +4,6 @@
 #include <Eigen/Dense>
 #include "cuda.h"
 #include "cuda_runtime.h"
-#include <cvcuda/OpFlip.hpp>
-#include <cvcuda/OpWarpPerspective.hpp>
-#include <cvcuda/OpConvertTo.hpp>
 
 #include "nvdiffrast/common/cudaraster/CudaRaster.hpp"
 #include "foundationpose_utils.hpp"
@@ -84,8 +81,8 @@ private:
                         int                                 rgb_W,
                         int                                 H,
                         int                                 W,
-                        nvcv::Tensor                       &flip_color_tensor,
-                        nvcv::Tensor                       &flip_xyz_map_tensor);
+                        float                              *flip_color_device,
+                        float                              *flip_xyz_map_device);
 
 private:
   //
@@ -156,7 +153,7 @@ private:
   cudaStream_t cuda_stream_render_;
   cudaStream_t cuda_stream_transf_;
 
-  nvcv::Tensor float_texture_map_tensor_;
+  DeviceBufferUniquePtrType<float>   float_texture_map_device_{nullptr};
 };
 
 } // namespace detection_6d

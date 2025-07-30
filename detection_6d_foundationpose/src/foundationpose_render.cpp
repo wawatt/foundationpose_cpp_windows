@@ -3,6 +3,9 @@
 #include <fstream>
 #include "foundationpose_render.cu.hpp"
 #include "foundationpose_utils.hpp"
+#include <ppl/cv/cuda/warpperspective.h>
+#include <ppl/cv/cuda/convertto.h>
+#include <ppl/cv/cuda/flip.h>
 
 namespace detection_6d {
 
@@ -183,38 +186,6 @@ bool ProjectMatrixFromIntrinsics(Eigen::Matrix4f       &proj_output,
   }
 
   return true;
-}
-
-void WrapImgPtrToNHWCTensor(
-    uint8_t *input_ptr, nvcv::Tensor &output_tensor, int N, int H, int W, int C)
-{
-  nvcv::TensorDataStridedCuda::Buffer output_buffer;
-  output_buffer.strides[3] = sizeof(uint8_t);
-  output_buffer.strides[2] = C * output_buffer.strides[3];
-  output_buffer.strides[1] = W * output_buffer.strides[2];
-  output_buffer.strides[0] = H * output_buffer.strides[1];
-  output_buffer.basePtr    = reinterpret_cast<NVCVByte *>(input_ptr);
-
-  nvcv::TensorShape::ShapeType shape{N, H, W, C};
-  nvcv::TensorShape            tensor_shape{shape, "NHWC"};
-  nvcv::TensorDataStridedCuda  output_data(tensor_shape, nvcv::TYPE_U8, output_buffer);
-  output_tensor = nvcv::TensorWrapData(output_data);
-}
-
-void WrapFloatPtrToNHWCTensor(
-    float *input_ptr, nvcv::Tensor &output_tensor, int N, int H, int W, int C)
-{
-  nvcv::TensorDataStridedCuda::Buffer output_buffer;
-  output_buffer.strides[3] = sizeof(float);
-  output_buffer.strides[2] = C * output_buffer.strides[3];
-  output_buffer.strides[1] = W * output_buffer.strides[2];
-  output_buffer.strides[0] = H * output_buffer.strides[1];
-  output_buffer.basePtr    = reinterpret_cast<NVCVByte *>(input_ptr);
-
-  nvcv::TensorShape::ShapeType shape{N, H, W, C};
-  nvcv::TensorShape            tensor_shape{shape, "NHWC"};
-  nvcv::TensorDataStridedCuda  output_data(tensor_shape, nvcv::TYPE_F32, output_buffer);
-  output_tensor = nvcv::TensorWrapData(output_data);
 }
 
 FoundationPoseRenderer::FoundationPoseRenderer(std::shared_ptr<BaseMeshLoader> mesh_loader,
@@ -492,18 +463,16 @@ bool FoundationPoseRenderer::LoadTexturedMesh()
       "[FoundationposeRender] cudaMemcpy rgb_texture_map_host -> texture_map_device_ FAILED!!!");
 
   // Preprocess mesh data
-  nvcv::Tensor texture_map_tensor;
-  WrapImgPtrToNHWCTensor(texture_map_device_.get(), texture_map_tensor, 1, texture_map_height_,
-                         texture_map_width_, kNumChannels);
-
-  nvcv::TensorShape::ShapeType shape{1, texture_map_height_, texture_map_width_, kNumChannels};
-  nvcv::TensorShape            tensor_shape{shape, "NHWC"};
-  float_texture_map_tensor_ = nvcv::Tensor(tensor_shape, nvcv::TYPE_F32);
+  float *_float_texture_map_device;
+  CHECK_CUDA(cudaMalloc(&_float_texture_map_device, texture_map_height_*texture_map_width_*kNumChannels*sizeof(float)),
+             "[FoundationposeRender] cudaMalloc `_float_texture_map_device` FAILED!!!");
+  float_texture_map_device_ = 
+      DeviceBufferUniquePtrType<float>(_float_texture_map_device, CudaMemoryDeleter<float>());
 
   const float       scale_factor = 1.0f / 255.0f;
-  cvcuda::ConvertTo convert_op;
-  convert_op(cuda_stream_render_, texture_map_tensor, float_texture_map_tensor_, scale_factor,
-             0.0f);
+  ppl::cv::cuda::ConvertTo<uint8_t, float, 3>(cuda_stream_render_, 
+    texture_map_height_, texture_map_width_, texture_map_width_*kNumChannels, texture_map_device_.get(),
+                                             texture_map_width_*kNumChannels, float_texture_map_device_.get(), scale_factor);
 
   return true;
 }
@@ -616,8 +585,8 @@ bool FoundationPoseRenderer::NvdiffrastRender(cudaStream_t                      
                                               int                                 rgb_W,
                                               int                                 H,
                                               int                                 W,
-                                              nvcv::Tensor                       &flip_color_tensor,
-                                              nvcv::Tensor &flip_xyz_map_tensor)
+                                              float   *flip_color_device,
+                                              float   *flip_xyz_map_device)
 {
   size_t N = poses.size();
   CHECK_STATE(TransformVerticesOnCUDA(cuda_stream, poses, pts_cam_device_.get()),
@@ -642,9 +611,8 @@ bool FoundationPoseRenderer::NvdiffrastRender(cudaStream_t                      
                                      num_vertices_, num_faces_, 2, kTexcoordsDim, H, W, N);
   CHECK_CUDA(cudaGetLastError(), "[FoundationPoseRenderer] interpolate failed!!!");
 
-  auto float_texture_map_data = float_texture_map_tensor_.exportData<nvcv::TensorDataStridedCuda>();
   foundationpose_render::texture(cuda_stream,
-                                 reinterpret_cast<float *>(float_texture_map_data->basePtr()),
+                                 float_texture_map_device_.get(),
                                  texcoords_out_device_.get(), color_device_.get(),
                                  texture_map_height_, texture_map_width_, kNumChannels, 1, H, W, N);
   CHECK_CUDA(cudaGetLastError(), "[FoundationPoseRenderer] texture failed!!!");
@@ -669,16 +637,21 @@ bool FoundationPoseRenderer::NvdiffrastRender(cudaStream_t                      
                                N * H * W * kNumChannels);
   CHECK_CUDA(cudaGetLastError(), "[FoundationPoseRenderer] clamp failed!!!");
 
-  nvcv::Tensor color_tensor, xyz_map_tensor;
-  WrapFloatPtrToNHWCTensor(color_device_.get(), color_tensor, N, H, W, kNumChannels);
-  WrapFloatPtrToNHWCTensor(xyz_map_device_.get(), xyz_map_tensor, N, H, W, kNumChannels);
-
-  cvcuda::Flip flip_op;
-  flip_op(cuda_stream, color_tensor, flip_color_tensor, 0);
+  for (size_t index = 0; index < N; index++) 
+  {
+    const size_t single_batch_element_size = H * W * kNumChannels;
+    ppl::cv::cuda::Flip<float, 3>(cuda_stream,
+        H, W, W*kNumChannels, color_device_.get() + index * single_batch_element_size,
+              W*kNumChannels, flip_color_device + index * single_batch_element_size,
+        0);
   CHECK_CUDA(cudaGetLastError(), "[FoundationPoseRenderer] flip_op failed!!!");
 
-  flip_op(cuda_stream, xyz_map_tensor, flip_xyz_map_tensor, 0);
+    ppl::cv::cuda::Flip<float, 3>(cuda_stream,
+      H, W, W*kNumChannels, xyz_map_device_.get() + index * single_batch_element_size,
+            W*kNumChannels, flip_xyz_map_device + index * single_batch_element_size,
+      0);
   CHECK_CUDA(cudaGetLastError(), "[FoundationPoseRenderer] flip_op failed!!!");
+  }
   return true;
 }
 
@@ -696,31 +669,20 @@ bool FoundationPoseRenderer::RenderProcess(cudaStream_t                        c
   CHECK_STATE(ConstructBBox2D(bbox2d, tfs, crop_window_H_, crop_window_W_),
               "[FoundationPose Render] RenderProcess construct bbox2d failed!!!");
 
-  // render
-  nvcv::Tensor render_rgb_tensor;
-  nvcv::Tensor render_xyz_map_tensor;
-  WrapFloatPtrToNHWCTensor(render_crop_rgb_tensor_device_.get(), render_rgb_tensor, N,
-                           crop_window_H_, crop_window_W_, kNumChannels);
-  WrapFloatPtrToNHWCTensor(render_crop_xyz_map_tensor_device_.get(), render_xyz_map_tensor, N,
-                           crop_window_H_, crop_window_W_, kNumChannels);
-
   // Render the object using give poses
   CHECK_STATE(NvdiffrastRender(cuda_stream, poses, intrinsic_, bbox2d, input_image_height,
-                               input_image_width, crop_window_H_, crop_window_W_, render_rgb_tensor,
-                               render_xyz_map_tensor),
+                               input_image_width, crop_window_H_, crop_window_W_, render_crop_rgb_tensor_device_.get(),
+                               render_crop_xyz_map_tensor_device_.get()),
               "[FoundationPose Render] RenderProcess NvdiffrastRender failed!!!");
 
-  auto render_rgb_data     = render_rgb_tensor.exportData<nvcv::TensorDataStridedCuda>();
-  auto render_xyz_map_data = render_xyz_map_tensor.exportData<nvcv::TensorDataStridedCuda>();
-
   foundationpose_render::threshold_and_downscale_pointcloud(
-      cuda_stream, reinterpret_cast<float *>(render_xyz_map_data->basePtr()),
+      cuda_stream, render_crop_xyz_map_tensor_device_.get(),
       reinterpret_cast<float *>(poses_on_device), N, crop_window_H_ * crop_window_W_,
       mesh_diameter_ / 2, min_depth_, max_depth_);
   CHECK_CUDA(cudaGetLastError(), "[FoundationPose] RenderProcess threshold_and... FAILED!!!");
 
-  foundationpose_render::concat(cuda_stream, reinterpret_cast<float *>(render_rgb_data->basePtr()),
-                                reinterpret_cast<float *>(render_xyz_map_data->basePtr()),
+  foundationpose_render::concat(cuda_stream, render_crop_rgb_tensor_device_.get(),
+                                render_crop_xyz_map_tensor_device_.get(),
                                 reinterpret_cast<float *>(render_input_dst_ptr), N, crop_window_H_,
                                 crop_window_W_, kNumChannels, kNumChannels);
   CHECK_CUDA(cudaGetLastError(), "[FoundationPose] RenderProcess concat FAILED!!!");
@@ -740,58 +702,42 @@ bool FoundationPoseRenderer::TransfProcess(cudaStream_t                       cu
   // crop rgb (transformed)
   const size_t N = tfs.size();
 
-  nvcv::Tensor rgb_tensor;
-  nvcv::Tensor xyz_map_tensor;
-  WrapImgPtrToNHWCTensor(reinterpret_cast<uint8_t *>(rgb_on_device), rgb_tensor, 1,
-                         input_image_height, input_image_width, kNumChannels);
-
-  WrapFloatPtrToNHWCTensor(reinterpret_cast<float *>(xyz_map_on_device), xyz_map_tensor, 1,
-                           input_image_height, input_image_width, kNumChannels);
-
-  const int    rgb_flags    = NVCV_INTERP_LINEAR;
-  const int    xyz_flags    = NVCV_INTERP_NEAREST;
-  const float4 border_value = {0, 0, 0, 0};
-
+  const ppl::cv::InterpolationType rgb_flags = ppl::cv::InterpolationType::INTERPOLATION_LINEAR;
+  const ppl::cv::InterpolationType xyz_flags = ppl::cv::InterpolationType::INTERPOLATION_NEAREST_POINT;
+  const float border_value = 0.0f;
   const float             scale_factor = 1.0f / 255.0f;
-  cvcuda::WarpPerspective warpPerspectiveOp(0);
-  cvcuda::ConvertTo       convert_op;
-  nvcv::Tensor            transformed_rgb_tensor;
-  WrapImgPtrToNHWCTensor(transformed_crop_rgb_tensor_device_.get(), transformed_rgb_tensor, 1,
-                         crop_window_H_, crop_window_W_, kNumChannels);
 
   for (size_t index = 0; index < N; index++)
   {
-    nvcv::Tensor float_rgb_tensor;
-    nvcv::Tensor transformed_xyz_map_tensor;
-
     // get ptr offset from index
     const size_t single_batch_element_size = crop_window_H_ * crop_window_W_ * kNumChannels;
-    WrapFloatPtrToNHWCTensor(transformed_rgb_device_.get() + index * single_batch_element_size,
-                             float_rgb_tensor, 1, crop_window_H_, crop_window_W_, kNumChannels);
 
-    WrapFloatPtrToNHWCTensor(transformed_xyz_map_device_.get() + index * single_batch_element_size,
-                             transformed_xyz_map_tensor, 1, crop_window_H_, crop_window_W_,
-                             kNumChannels);
-
-    NVCVPerspectiveTransform trans_matrix;
+    auto tf_inv = tfs[index].inverse();
+    float trans_matrix[9];
     for (size_t i = 0; i < kPTMatrixDim; i++)
     {
       for (size_t j = 0; j < kPTMatrixDim; j++)
       {
-        trans_matrix[i * kPTMatrixDim + j] = tfs[index](i, j);
+        trans_matrix[i * kPTMatrixDim + j] = tf_inv(i, j);
       }
     }
 
-    warpPerspectiveOp(cuda_stream, rgb_tensor, transformed_rgb_tensor, trans_matrix, rgb_flags,
-                      NVCV_BORDER_CONSTANT, border_value);
+    ppl::cv::cuda::WarpPerspective<uint8_t, 3>(cuda_stream,
+      input_image_height, input_image_width, input_image_width*kNumChannels, reinterpret_cast<uint8_t *>(rgb_on_device),
+      crop_window_H_,     crop_window_W_,    crop_window_W_*kNumChannels,    transformed_crop_rgb_tensor_device_.get(),
+      trans_matrix, rgb_flags, ppl::cv::BorderType::BORDER_CONSTANT, border_value);
     CHECK_CUDA(cudaGetLastError(),
                "[FoundationPose] TransfProcess warpPerspectiveOp on rgb FAILED!!!");
 
-    convert_op(cuda_stream, transformed_rgb_tensor, float_rgb_tensor, scale_factor, 0.0f);
+    ppl::cv::cuda::ConvertTo<uint8_t, float, 3>(cuda_stream, 
+      crop_window_H_, crop_window_W_, crop_window_W_*kNumChannels, transformed_crop_rgb_tensor_device_.get(),
+      crop_window_W_*kNumChannels, transformed_rgb_device_.get(), scale_factor, 0.f);
     CHECK_CUDA(cudaGetLastError(), "[FoundationPose] TransfProcess convert_op on rgb FAILED!!!");
 
-    warpPerspectiveOp(cuda_stream, xyz_map_tensor, transformed_xyz_map_tensor, trans_matrix,
-                      xyz_flags, NVCV_BORDER_CONSTANT, border_value);
+    ppl::cv::cuda::WarpPerspective<float, 3>(cuda_stream, 
+      input_image_height, input_image_width, input_image_width*kNumChannels, reinterpret_cast<float *>(xyz_map_on_device),
+      crop_window_H_, crop_window_W_, crop_window_W_*kNumChannels, transformed_xyz_map_device_.get(),
+      trans_matrix, xyz_flags, ppl::cv::BorderType::BORDER_CONSTANT, border_value);
     CHECK_CUDA(cudaGetLastError(),
                "[FoundationPose] TransfProcess warpPerspectiveOp on xyz_map FAILED!!!");
   }

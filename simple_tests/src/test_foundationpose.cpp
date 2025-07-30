@@ -67,7 +67,7 @@ TEST(foundationpose_test, test)
   cv::cvtColor(regist_plot, regist_plot, cv::COLOR_RGB2BGR);
   auto draw_pose = ConvertPoseMesh2BBox(out_pose, mesh_loader);
   draw3DBoundingBox(intrinsic_in_mat, draw_pose, 480, 640, object_dimension, regist_plot);
-  cv::imwrite("/workspace/test_data/test_foundationpose_plot.png", regist_plot);
+  cv::imwrite("workspace/test_data/test_foundationpose_plot.png", regist_plot);
 
   auto rgb_paths = get_files_in_directory(demo_data_path_ + "/rgb/");
   std::sort(rgb_paths.begin(), rgb_paths.end());
@@ -100,7 +100,7 @@ TEST(foundationpose_test, test)
     out_pose = track_pose;
   }
 
-  saveVideo(result_image_sequence, "/workspace/test_data/test_foundationpose_result.mp4");
+  saveVideo(result_image_sequence, "workspace/test_data/test_foundationpose_result.mp4");
 }
 
 TEST(foundationpose_test, speed_register)

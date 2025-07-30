@@ -704,7 +704,6 @@ bool FoundationPoseRenderer::TransfProcess(cudaStream_t                       cu
 
   const ppl::cv::InterpolationType rgb_flags = ppl::cv::InterpolationType::INTERPOLATION_LINEAR;
   const ppl::cv::InterpolationType xyz_flags = ppl::cv::InterpolationType::INTERPOLATION_NEAREST_POINT;
-  const float border_value = 0.0f;
   const float             scale_factor = 1.0f / 255.0f;
 
   for (size_t index = 0; index < N; index++)
@@ -723,21 +722,21 @@ bool FoundationPoseRenderer::TransfProcess(cudaStream_t                       cu
     }
 
     ppl::cv::cuda::WarpPerspective<uint8_t, 3>(cuda_stream,
-      input_image_height, input_image_width, input_image_width*kNumChannels, reinterpret_cast<uint8_t *>(rgb_on_device),
+      input_image_height, input_image_width, input_image_width*kNumChannels, reinterpret_cast<uint8_t *>(rgb_on_device) ,
       crop_window_H_,     crop_window_W_,    crop_window_W_*kNumChannels,    transformed_crop_rgb_tensor_device_.get(),
-      trans_matrix, rgb_flags, ppl::cv::BorderType::BORDER_CONSTANT, border_value);
+      trans_matrix, rgb_flags, ppl::cv::BorderType::BORDER_CONSTANT);
     CHECK_CUDA(cudaGetLastError(),
                "[FoundationPose] TransfProcess warpPerspectiveOp on rgb FAILED!!!");
 
     ppl::cv::cuda::ConvertTo<uint8_t, float, 3>(cuda_stream, 
       crop_window_H_, crop_window_W_, crop_window_W_*kNumChannels, transformed_crop_rgb_tensor_device_.get(),
-      crop_window_W_*kNumChannels, transformed_rgb_device_.get(), scale_factor, 0.f);
+      crop_window_W_*kNumChannels, transformed_rgb_device_.get() + index*single_batch_element_size, scale_factor);
     CHECK_CUDA(cudaGetLastError(), "[FoundationPose] TransfProcess convert_op on rgb FAILED!!!");
 
     ppl::cv::cuda::WarpPerspective<float, 3>(cuda_stream, 
       input_image_height, input_image_width, input_image_width*kNumChannels, reinterpret_cast<float *>(xyz_map_on_device),
-      crop_window_H_, crop_window_W_, crop_window_W_*kNumChannels, transformed_xyz_map_device_.get(),
-      trans_matrix, xyz_flags, ppl::cv::BorderType::BORDER_CONSTANT, border_value);
+      crop_window_H_, crop_window_W_, crop_window_W_*kNumChannels, transformed_xyz_map_device_.get() + index*single_batch_element_size,
+      trans_matrix, xyz_flags, ppl::cv::BorderType::BORDER_CONSTANT);
     CHECK_CUDA(cudaGetLastError(),
                "[FoundationPose] TransfProcess warpPerspectiveOp on xyz_map FAILED!!!");
   }

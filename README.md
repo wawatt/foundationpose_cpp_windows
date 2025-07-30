@@ -10,7 +10,7 @@ cd vcpkg
 ./bootstrap-vcpkg.bat
 ./vcpkg.exe install assimp opencv4 eigen3 gtest glog 
 ```
-### 2. CV-CUDA
+### 2. CV-CUDA -> ppl.cv
 [CV-CUDA](https://github.com/CVCUDA/CV-CUDA.git) currently (2025-07-30) does not support Windows. The main modification in this branch is using ppl.cv instead. Compile ppl.cv:
 ```shell
 git clone https://github.com/openppl/ppl.cv.git

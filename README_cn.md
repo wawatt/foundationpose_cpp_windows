@@ -10,7 +10,7 @@ cd vcpkg
 ./bootstrap-vcpkg.bat
 ./vcpkg.exe install assimp opencv4 eigen3 gtest glog 
 ```
-### 2. CV-CUDA
+### 2. CV-CUDA -> ppl.cv
 目前[CV-CUDA](https://github.com/CVCUDA/CV-CUDA.git)目前(20250730)尚不支持windows平台，所以本分支的主要修改在于如何用ppl.cv替换CV-CUDA, 下面编译ppl.cv
 ```shell
 git clone https://github.com/openppl/ppl.cv.git
@@ -19,7 +19,8 @@ mkdir build
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=../install ^
 -DPPLCV_USE_X86_64=ON -DPYBIND11_NOPYTHON=ON ^
--DPPLCV_USE_CUDA=ON -DPPLCV_INSTALL=ON -DPPLCOMMON_INSTALL=ON
+-DPPLCV_USE_CUDA=ON -DPPLCV_INSTALL=ON -DPPLCOMMON_INSTALL=ON -DPPLCV_USE_MSVC_STATIC_RUNTIME=OFF ^
+-DCUDA_USE_STATIC_CUDA_RUNTIME=OFF -DCMAKE_CUDA_ARCHITECTURES="86;89"
 cmake --build . --config Release --target ALL_BUILD
 cmake --build . --config Release --target install
 ```
